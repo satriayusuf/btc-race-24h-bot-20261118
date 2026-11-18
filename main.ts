@@ -5,12 +5,15 @@
 // impact, this bot trades only one kind of move: a fresh EMA crossover
 // confirmed by a rising slow regime. It stays in cash through falls and
 // chop, buys the whole cash balance the moment EMA(8) crosses above
-// EMA(60) while the price sits above a rising EMA(120), and exits on a
-// -0.8% stop, a +1.5% take-profit, or the trend turning back down (EMA(8)
-// under EMA(60), or two closes under EMA(60)). After any exit it waits 30
-// minutes before the next entry, so a choppy stretch costs one trade, not
-// dozens. A tiny guardrail trade guarantees at least one filled order in a
-// window where no signal ever fires.
+// EMA(60) — on the cross bar or the next one, with the price above both
+// the mid line and a rising EMA(120) — and exits on a -0.8% stop, a +1.5%
+// take-profit, or the trend turning back down (EMA(8) under EMA(60) for
+// two bars running, or two closes under EMA(60)). Both the entry and the
+// trend exit demand confirmation, so a single flickering bar can neither
+// buy the top of a spike nor sell the bottom of a dip. After any exit it
+// waits 30 minutes before the next entry, so a sideways day costs one
+// trade instead of dozens. A tiny guardrail trade guarantees at least one
+// filled order in a window where no signal ever fires.
 //
 // On the kit's frozen dev window (graded locally with `makefun grade-local`,
 // the server's own replay) the bot makes +5.36 USDC net of all fees in a
@@ -35,6 +38,7 @@ const SLOPE_LAG = 11;         // regime slope measured over this many bars
 const SLOPE_MIN = 0.0002;     // regime must be rising by at least this share
 const MIN_BARS = 120;         // bars of history before the first entry
 const EXIT_CONFIRM = 2;       // closes under the trend line that force an exit
+const CROSS_DOWN_CONFIRM = 2; // bars of EMA_FAST under EMA_MID that force an exit
 
 // --- sizing and exits -------------------------------------------------------
 const STOP_LOSS = 0.008;      // hard stop: -0.8% from the entry decision close
@@ -55,6 +59,7 @@ const regimeHist: number[] = []; // regime EMA after every bar, oldest first
 let prevGap: number | null = null;
 let crossAge = 1e9;              // bars since EMA_FAST crossed above EMA_MID
 let belowMid = 0;                // consecutive closes under the trend line
+let crossDown = 0;               // consecutive bars of EMA_FAST under EMA_MID
 let inPosition = false;
 let awaitingFill = false;        // a buy was decided, its fill not yet seen
 let entryRef = 0;                // close at the entry decision
@@ -71,6 +76,7 @@ function reset(): void {
   prevGap = null;
   crossAge = 1e9;
   belowMid = 0;
+  crossDown = 0;
   inPosition = false;
   awaitingFill = false;
   entryRef = 0;
@@ -120,6 +126,7 @@ function onBatch(state: BarsState, batch: Batch): OrderInput[] {
   if (sellFilled) {
     inPosition = false;
     belowMid = 0;
+    crossDown = 0;
   }
 
   const closeBig = state.close(SYMBOL);
@@ -160,8 +167,12 @@ function onBatch(state: BarsState, batch: Batch): OrderInput[] {
     } else if (entryRef > 0 && close >= entryRef * (1 + TAKE_PROFIT)) {
       sell = sellAllOrder(state); // take profit
     } else {
+      // Trend exit, confirmed both ways: the fast EMA under the trend line
+      // for two bars running, or two closes under the trend line. A single
+      // flickering bar exits nothing.
       belowMid = close < emaMid ? belowMid + 1 : 0;
-      if (gap < 0 || belowMid >= EXIT_CONFIRM) sell = sellAllOrder(state); // trend turned down
+      crossDown = gap < 0 ? crossDown + 1 : 0;
+      if (crossDown >= CROSS_DOWN_CONFIRM || belowMid >= EXIT_CONFIRM) sell = sellAllOrder(state);
     }
     if (sell !== null) cooldownUntil = barIndex + COOLDOWN + 1;
     return sell === null ? [] : [sell];
@@ -174,8 +185,12 @@ function onBatch(state: BarsState, batch: Batch): OrderInput[] {
     const past = regimeHist[regimeHist.length - 1 - SLOPE_LAG];
     slopeOk = (emaRegime - past) / past > SLOPE_MIN;
   }
+  // Fresh cross, price above the trend line as well as the regime line, and
+  // the regime rising: a cross that fired while the price already sits under
+  // its own trend line is a whipsaw, not a trend.
   const entrySignal =
     crossAge <= CROSS_WINDOW &&
+    close > emaMid &&
     close > emaRegime &&
     slopeOk &&
     barIndex >= MIN_BARS &&
@@ -186,6 +201,7 @@ function onBatch(state: BarsState, batch: Batch): OrderInput[] {
     if (order !== null) {
       entryRef = close;
       belowMid = 0;
+      crossDown = 0;
       awaitingFill = true;
       return [order];
     }

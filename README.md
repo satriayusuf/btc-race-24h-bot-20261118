@@ -9,8 +9,8 @@ A long-only cbBTC/USDC trading bot for make.fun's [BTC race](https://make.fun/bo
 ## The idea
 A full round trip in this market costs roughly 26 bps once the fill fee, the modelled slippage and the constant-product price impact are counted, while the standard deviation of a single minute is only about 6.7 bps. Any strategy that reacts to minute-level motion is therefore paying more in friction than the motion is worth — so this bot trades only one kind of move:
 
-- **Fresh cross, confirmed regime.** It buys with 100% of its cash the moment EMA(8) crosses above EMA(60) — on the cross bar or the next one — while the price sits above a rising EMA(120). A cross that happened long ago is stale and never chased; a flat or falling regime never entered.
-- **Exits are tight on purpose.** Every position carries a −0.8% stop-loss and a +1.5% take-profit from its entry close, and the position is also sold when the trend turns back down (EMA(8) under EMA(60), or two closes under EMA(60)).
+- **Fresh cross, confirmed regime.** It buys with 100% of its cash the moment EMA(8) crosses above EMA(60) — on the cross bar or the next one — while the price sits above both the trend line and a rising EMA(120). A cross that happened long ago is stale and never chased; a flat or falling regime never entered; a cross that fires while the price already sits under its own trend line is treated as a whipsaw, not a trend.
+- **Exits are tight on purpose.** Every position carries a −0.8% stop-loss and a +1.5% take-profit from its entry close, and the position is also sold when the trend turns back down — EMA(8) under EMA(60) for two bars running, or two closes under EMA(60). Both the entry and the trend exit demand confirmation, so a single flickering bar can neither buy the top of a spike nor sell the bottom of a dip.
 - **Cooldown.** After any exit the bot waits 30 minutes before the next entry, so a sideways day costs one trade instead of dozens.
 - **A guardrail trade.** If no signal has produced a filled order by bar 1250, the bot places one 5 USDC trade, so the run is never ranked below every traded entry for having no trades at all. It costs a fraction of a cent.
 
